@@ -1,0 +1,267 @@
+using log4net.Repository.Hierarchy;
+using PayPal.Api;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+using System.Web.Mvc;
+using Cobra.Models;
+using System.Diagnostics;
+
+
+
+namespace Cobra.Controllers
+{
+
+    public class PaypalController : Controller
+    {
+        private static APIContext apiContext = InitApiContext();
+        private static Payment pymnt;
+        private static Payment x;
+
+        public ActionResult Index()
+        {
+            return View();
+        }
+
+        private static APIContext InitApiContext()
+        {
+            Dictionary<string, string> sdkConfig = new Dictionary<string, string>();
+            sdkConfig.Add("mode", "sandbox");
+
+            string accessToken = new OAuthTokenCredential(
+                "ClientId",
+                "SecretId", sdkConfig).GetAccessToken();
+
+            APIContext apiContext = new APIContext(accessToken);
+            apiContext.Config = sdkConfig;
+            return apiContext;
+        }
+
+        public ActionResult payPalPayment()
+        {
+            Amount amnt = new Amount();
+            amnt.currency = "USD";
+            amnt.total = "12";
+
+            // put amount in transction to do a transaction
+            List<Transaction> transactionList = new List<Transaction>();
+            Transaction tran = new Transaction();
+            tran.description = "creating a payment";
+            tran.amount = amnt;
+            transactionList.Add(tran);
+
+            Payer payr = new Payer();
+            payr.payment_method = "paypal";
+
+            RedirectUrls redirUrls = new RedirectUrls();
+            // redirUrls.cancel_url ="https://devtools-paypal.com/guide/pay_paypal/dotnet?cancel=true";
+            //redirUrls.return_url = "https://devtools-paypal.com/guide/pay_paypal/dotnet?success=true";
+            redirUrls.cancel_url = "http://localhost:10800/Paypal/failed?condition=false";
+            redirUrls.return_url = "http://localhost:10800/Paypal/PayerDetails?condition=true";
+
+            pymnt = new Payment();
+            pymnt.intent = "sale";
+            pymnt.payer = payr;
+            pymnt.transactions = transactionList;
+            pymnt.redirect_urls = redirUrls;
+
+            Payment createdPayment = pymnt.Create(apiContext);
+
+            if (createdPayment.state.ToLower() == "approved" || createdPayment.state.ToLower() == "created")
+
+            {
+                Links proceed = createdPayment.links.Where(l => l.method.ToLower().Equals("redirect")).FirstOrDefault();
+                return Json(new { RedirectedUrl = proceed.href }, JsonRequestBehavior.AllowGet);
+            }
+            else
+            {
+                return View("oops");
+            }
+        }
+
+        [NonAction]
+        public bool PayerDetailsFromPayPal(DetailsUsingPaypalAccount DAPU)
+        {
+            Payment payment = new Payment();
+            payment.id = DAPU.paymentId;
+
+            PaymentExecution pymntExecution = new PaymentExecution();
+            pymntExecution.payer_id = DAPU.PayerID;
+            Payment executedPayment = payment.Execute(apiContext, pymntExecution);
+
+            try
+            {
+                if (executedPayment.state.ToLower() == "approved")
+                    return true;
+            }
+            catch (PayPal.PaymentsException ex)
+            {
+                throw ex;
+            }
+            //return View("PayPalPaymentSuccess");
+            return true;
+        }
+
+        public ActionResult PayerDetails(DetailsUsingPaypalAccount DAPU)
+        {
+
+
+            var a = PayerDetailsFromPayPal(DAPU);
+            //return Json(new { x = a });
+            return View("PayPalPaymentSuccess", a);
+        }
+
+        public JsonResult storeCreditCardPayPal(PaypalCCModel ccmodel)
+        {
+            return Json(new { x = storecredit(ccmodel) });
+        }
+
+
+        [NonAction]
+        private bool storecredit(PaypalCCModel ccmodel)
+        {
+            CreditCard credtCard = new CreditCard();
+            credtCard.type = ccmodel.type.ToLower() ?? "visa";
+            credtCard.number = "4446283280247004";
+            credtCard.expire_month = ccmodel.expiryMonth;
+            credtCard.expire_year = ccmodel.expiryYear;
+            credtCard.cvv2 = ccmodel.cvv;
+            credtCard.first_name = "Garry";
+            credtCard.last_name = "Singh";
+
+            var cardId = "";
+            try
+            {
+                CreditCard createdCreditCard = credtCard.Create(apiContext);
+                cardId = createdCreditCard.id;
+            }
+            catch (Exception ex)
+            {
+
+                throw ex;
+            }
+            return PaymentViaStoredCard(cardId);
+        }
+
+
+        [NonAction]
+        public bool PaymentViaStoredCard(string cardId)
+        {
+            //just to see details of credit card from paypal to show to  user
+            // or
+            // Delete the credit card from vault
+
+            //  CreditCard card = CreditCard.Get(apiContext, cardId);
+            //  card.Delete(apiContext)
+
+            CreditCardToken credCardToken = new CreditCardToken();
+            credCardToken.credit_card_id = cardId;
+
+            FundingInstrument fundInstrument = new FundingInstrument();
+            fundInstrument.credit_card_token = credCardToken;
+
+            List<FundingInstrument> fundingInstrumentList = new List<FundingInstrument>();
+            fundingInstrumentList.Add(fundInstrument);
+
+            Payer payr = new Payer();
+            payr.funding_instruments = fundingInstrumentList;
+            payr.payment_method = "credit_card";
+
+            Amount amnt = new Amount();
+            amnt.currency = "USD";
+            amnt.total = "12";
+
+            Transaction tran = new Transaction();
+            tran.description = "creating a payment with saved credit card";
+            tran.amount = amnt;
+
+            List<Transaction> transactions = new List<Transaction>();
+            transactions.Add(tran);
+
+            Payment pymnt = new Payment();
+            pymnt.intent = "sale";
+            pymnt.payer = payr;
+            pymnt.transactions = transactions;
+
+
+            try
+            {
+                Payment createdPayment = pymnt.Create(apiContext);
+                if (createdPayment.state.ToLower() == "approved" || createdPayment.state.ToLower() == "created")
+
+                {
+                    return true;
+                }
+                if (createdPayment.state.ToLower() == "VERIFIED")
+                {
+                    return true;
+                }
+
+                if (createdPayment.state.ToLower() != "approved" || createdPayment.state.ToLower() == "failed")
+                {
+                    return false;
+                }
+            }
+            catch (PayPal.PayPalException ex)
+            {
+                //Debug.WriteLine(ex.Message);
+                //message = ex.Message;
+                throw ex;
+
+            }
+            catch (Exception ex)
+            {
+
+                throw ex;
+            }
+            return true;
+        }
+
+
+
+
+        [HttpGet]
+        public ActionResult StoreCreditCardInPaypal(PaypalCCModel ccmodel)
+        {
+            CreditCard credtCard = new CreditCard();
+            credtCard.expire_month = ccmodel.expiryMonth;
+            credtCard.expire_year = ccmodel.expiryYear;
+            credtCard.number = ccmodel.cardNumber;
+            credtCard.type = ccmodel.type.ToLower();
+            credtCard.cvv2 = ccmodel.cvv;
+            //   credtCard.payer_id= ""
+
+            try
+            {
+                CreditCard createdCreditCard = credtCard.Create(apiContext);
+                if (createdCreditCard.Equals(null) || createdCreditCard.Equals(""))
+                {
+                    return View("failed");
+                }
+
+                if (string.IsNullOrEmpty(createdCreditCard.id))
+                {
+                    return Redirect("StoreCreditCardInPaypal");
+                }
+                if (createdCreditCard.state.ToLower() != "approved")
+                {
+                    return View("oops");
+                }
+                if (createdCreditCard.state.ToLower() == "approved" || createdCreditCard.state.ToLower() == "created")
+                {
+                    return View("approved");
+                }
+
+            }
+            catch (PayPal.PayPalException ex)
+            {
+
+                throw ex;
+            }
+
+
+            return View("DataFromPayPal");
+        }
+    }
+};

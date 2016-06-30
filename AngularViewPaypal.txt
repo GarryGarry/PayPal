@@ -1,0 +1,39 @@
+  <script type="text/javascript">
+
+            var t = angular.module('MyApp', []);
+            t.controller('DemoCtrl', function ($scope, $http) {
+
+                $scope.creditCardDetails = {
+                    type: "Visa",
+                    //  nostore: 0,
+                    cvv: "",
+                    cardNumber: "",
+                    cardName: "",
+                    expiryYear: "",
+                    expiryMonth: ""
+                };
+                $scope.payWithCreditCard = function () {
+                    var req = {
+
+                        contentType: "application/json; charset=utf-8",
+                        method: "POST",
+                        url: '@Url.Action("storeCreditCardPayPal", "Paypal")',
+                        data: $scope.creditCardDetails,
+                        dataType: "application/json",
+                    };
+                    $http(req).success(function (data, status, headers, config) {
+                        console.log(data);
+                    })
+                };
+                $scope.payWithPayPal = function () {
+                    $http({
+                        type: "get",
+                        url: '@Url.Action("payPalPayment", "Paypal")',
+                        dataType: "application/json",
+                    }).success(function (response) {
+                        window.location.href = response.RedirectedUrl;
+                    })
+                };
+            });
+
+        </script>
